@@ -13,6 +13,9 @@ pub struct  Iter<'a, T> {
 
 impl<T> RingBuffer<T> {
     pub fn new(size: usize) -> Self {
+        if size == 0 {
+            panic!("Use a size bigger than 0");
+        }
         RingBuffer { 
             front: -1, 
             rear: -1,
@@ -26,13 +29,29 @@ impl<T> RingBuffer<T> {
     }
 
     pub fn iter_mut(&mut self) -> IterMut<'_, T> {
-        let front = self.front;
-        let (head, tail) = self.items.split_at_mut(front as usize);
-        IterMut { inner: tail.iter_mut().chain(head.iter_mut()) }
+        let len = self.len();
+        if len == 0 {
+            let (head, tail) = self.items.split_at_mut(0);
+            return IterMut { inner: head.iter_mut().chain(tail.iter_mut()) };
+        }
+
+        let start = self.front as usize;
+        let first_len = (self.items.len() - start).min(len);
+        let wrapped = len - first_len;
+
+        let (head, tail) = self.items.split_at_mut(start);
+        IterMut {
+            inner: tail[..first_len].iter_mut().chain(head[..wrapped].iter_mut()),
+        }
     }
 
     pub fn len(&self) -> usize {
-        self.items.len()
+        if self.front == -1 {
+            return 0
+        } else if self.rear >= self.front  {
+            return (self.rear - self.front + 1) as usize
+        }
+        self.capacity - self.front as usize + self.rear as usize + 1
     }
 
     pub fn is_full(&self) -> bool {
@@ -52,7 +71,6 @@ impl<T> RingBuffer<T> {
 
     pub fn tail(&self) -> Option<&T> {
         if self.is_empty() {
-            println!("The queue is empty");
             return None
         }
         Some(self.items[self.rear as usize].as_ref().unwrap())
@@ -87,7 +105,6 @@ impl<T> RingBuffer<T> {
         }
 
         let front_value: Option<T> = self.items[self.front as usize].take();
-        self.items[self.front as usize] = None;
 
         if self.front == self.rear {
             self.front = -1;
@@ -103,7 +120,7 @@ impl<T> RingBuffer<T> {
 
 impl<T> Default for RingBuffer<T> {
     fn default() -> Self {
-        RingBuffer::<T>::new(0)
+        RingBuffer::<T>::new(1)
     }
 }
 
@@ -111,16 +128,18 @@ impl<'a, T> Iterator for Iter<'a, T> {
     type Item = &'a T;
 
     fn next(&mut self) -> Option<Self::Item> {
-        if self.position >= self.ring.capacity {
+        if self.position >= self.ring.len() {
             return None;
         }
-        let idx = self.position % self.ring.capacity;
+        let idx = (self.ring.front as usize + self.position) % self.ring.capacity;
         self.position += 1;
-        self.ring.items[idx].as_ref()
+        Some(
+            self.ring.items[idx].as_ref().expect("slot inside occupied range was empty")
+        )
     }
 
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = self.ring.capacity - self.position;
+        let remaining = self.ring.len() - self.position;
         (remaining, Some(remaining))
     }
 
@@ -162,17 +181,31 @@ impl<'a, T> IntoIterator for &'a mut RingBuffer<T> {
     }
 }
 
-pub type IntoIter<T> =
-    std::iter::Chain<std::vec::IntoIter<T>, std::vec::IntoIter<T>>;
+pub struct IntoIter<T> {
+    ring: RingBuffer<T>,
+}
+
+impl<T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        self.ring.dequeue()
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        let remaining = self.ring.len();
+        (remaining, Some(remaining))
+    }
+}
+
+impl<T> ExactSizeIterator for IntoIter<T> {}
 
 impl<T> IntoIterator for RingBuffer<T> {
-    type Item = Option<T>;
-    type IntoIter = IntoIter<Option<T>>;
+    type Item = T;
+    type IntoIter = IntoIter<T>;
 
     fn into_iter(self) -> Self::IntoIter {
-        let mut items = self.items;
-        let tail = items.split_off(self.front as usize);
-        tail.into_iter().chain(items)
+        IntoIter { ring: self }
     }
 }
 
@@ -181,6 +214,7 @@ mod test {
     use super::*;
 
     #[test]
+    #[should_panic(expected = "Use a size bigger than 0")]
     fn test_init() {
         let queue: RingBuffer<u32> = RingBuffer::new(0);
         assert_eq!(queue.front, -1);
@@ -269,7 +303,7 @@ mod test {
             *x -= 5;
         }
 
-        let owned: Vec<u32> = q.into_iter().flatten().collect();
+        let owned: Vec<u32> = q.into_iter().collect();
         assert_eq!(owned, vec![0, 5, 10, 15, 20, 25]);
     }
 
@@ -282,8 +316,8 @@ mod test {
         assert_eq!(q.dequeue(), Some(1));
         assert_eq!(q.dequeue(), Some(2));
         assert_eq!(q.dequeue(), Some(3));
-        assert!(q.is_empty());        // fails
-        assert_eq!(q.peek(), None);   // panics
+        assert!(q.is_empty());
+        assert_eq!(q.peek(), None);
     }
 
     #[test]
@@ -294,5 +328,29 @@ mod test {
         q.enqueue(4); q.enqueue(5);
         let got: Vec<&u32> = q.iter().collect();
         assert_eq!(got, vec![&3, &4, &5]);
+    }
+
+    #[test]
+    fn iter_mut_partial_and_wrapped() {
+        let mut q: RingBuffer<u32> = RingBuffer::new(4);
+        q.enqueue(1); q.enqueue(2); q.enqueue(3);
+        q.dequeue();
+        for x in &mut q { *x *= 10; }
+        let got: Vec<&u32> = q.iter().collect();
+        assert_eq!(got, vec![&20, &30]);
+
+        q.enqueue(4); q.enqueue(5);
+        for x in &mut q { *x += 1; }
+        let got: Vec<&u32> = q.iter().collect();
+        assert_eq!(got, vec![&21, &31, &5, &6]);
+    }
+
+    #[test]
+    fn into_iter_partial() {
+        let mut q: RingBuffer<u32> = RingBuffer::new(4);
+        q.enqueue(1); q.enqueue(2); q.enqueue(3);
+        q.dequeue();
+        let owned: Vec<u32> = q.into_iter().collect();
+        assert_eq!(owned, vec![2, 3]);
     }
 }
