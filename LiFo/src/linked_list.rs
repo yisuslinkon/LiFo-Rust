@@ -4,12 +4,6 @@ pub struct Node<T> {
     next: Option<Box<Node<T>>>
 }
 
-impl<T: Default> Default for Node<T> {
-    fn default() -> Self {
-        Node::<T>::new(Default::default())
-    }
-}
-
 impl<T> Node<T> {
     pub fn new(value: T) -> Self {
         Self {
@@ -39,13 +33,7 @@ impl<T> LinkList<T> {
 
     pub fn push(&mut self, value: T) {
         let mut node: Node<T> = Node::new(value);
-        let old_head: Option<Box<Node<T>>> = self.head.take();
-        match old_head {
-            Some(n) => {
-                node.next = Some(n);
-            },
-            None => {},
-        }
+        node.next = self.head.take();
         self.head = Some(Box::new(node));
     }
 
@@ -101,6 +89,18 @@ mod tests {
     }
 
     #[test]
+    fn test_empty_pop() {
+        let mut l: LinkList<u32> = LinkList::new();
+        assert_eq!(l.pop(), None);
+    }
+
+    #[test]
+    fn test_empty_peek() {
+        let l: LinkList<u32> = LinkList::new();
+        assert_eq!(l.peek(), None);
+    }
+
+    #[test]
     fn test_simple_pop() {
         let mut l: LinkList<u32> = LinkList::new();
         l.push(1);
@@ -116,6 +116,24 @@ mod tests {
         assert_eq!(l.head.as_ref().unwrap().item, 6);
         assert_eq!(l.head.as_ref().unwrap().next.as_ref().unwrap().item, 4);
         assert_eq!(l.head.as_ref().unwrap().next.as_ref().unwrap().next.as_ref().unwrap().item, 1);
+    }
+
+    #[test]
+    fn test_simple_pop_api() {
+        let mut l: LinkList<u32> = LinkList::new();
+        l.push(1);
+        l.push(2);
+        l.push(3);
+        assert_eq!(l.pop(), Some(3));
+        l.push(4);
+        assert_eq!(l.pop(), Some(4));
+        l.push(5);
+        assert_eq!(l.pop(), Some(5));
+        l.push(6);
+        assert_eq!(l.pop(), Some(6));
+        assert_eq!(l.pop(), Some(2));
+        assert_eq!(l.pop(), Some(1));
+        assert_eq!(l.pop(), None);
     }
 
     #[test]
@@ -155,6 +173,7 @@ mod tests {
 
     #[test]
     fn test_drop_success() {
+        // Justo to validate avoid memmory issues stack overflow
         let mut l: LinkList<u32> = LinkList::new();
 
         for x in 0..100_000 {
