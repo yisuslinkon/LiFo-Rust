@@ -6,11 +6,6 @@ pub struct RingBuffer<T> {
     items: Vec<Option<T>>
 }
 
-pub struct  Iter<'a, T> {
-    ring: &'a RingBuffer<T>,
-    position: usize
-}
-
 impl<T> RingBuffer<T> {
     pub fn new(size: usize) -> Self {
         if size == 0 {
@@ -122,6 +117,11 @@ impl<T> Default for RingBuffer<T> {
     fn default() -> Self {
         RingBuffer::<T>::new(1)
     }
+}
+
+pub struct  Iter<'a, T> {
+    ring: &'a RingBuffer<T>,
+    position: usize
 }
 
 impl<'a, T> Iterator for Iter<'a, T> {
